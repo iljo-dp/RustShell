@@ -1,8 +1,8 @@
-use std::io::{self, Write};
 use std::process::exit;
-use std::fs::create_dir_all;
+use tokio::fs::create_dir_all;
 use rustyline::Editor;
 use tokio::task;
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 
 mod prompt;
 
@@ -10,22 +10,46 @@ const HISTORY_FILE: &str = ".local/share/rsh/history";
 
 async fn execute_command(line: String) {
     let mut parts = line.trim().split_whitespace();
-    if let Some(command) = parts.next() {
-        let args: Vec<&str> = parts.collect();
+    let mut commands: Vec<&str> = Vec::new();
 
-        let status = tokio::process::Command::new(command)
-            .args(args)
-            .status()
+    while let Some(command) = parts.next() {
+        if command == "|" {
+            execute_pipeline(&commands).await;
+            commands.clear();
+        } else {
+            commands.push(command);
+        }
+    }
+
+    if !commands.is_empty() {
+        execute_pipeline(&commands).await;
+    }
+}
+
+async fn execute_pipeline(commands: &[&str]) {
+    if !commands.is_empty() {
+        let mut child = tokio::process::Command::new(commands[0])
+            .args(&commands[1..])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("Failed to start command");
+
+        if let Some(stdout) = child.stdout.take() {
+            let mut stdin = io::stdin();
+            let mut stdin_writer = io::stdout();
+
+            let mut stdout_reader = BufReader::new(stdout);
+            let mut stdin_writer = BufWriter::new(stdin_writer);
+
+            tokio::spawn(async move {
+                if let Err(err) = io::copy(&mut stdout_reader, &mut stdin_writer).await {
+                    eprintln!("Failed to copy: {}", err);
+                }
+            })
             .await;
 
-        match status {
-            Ok(status) => {
-                if !status.success() {
-                    eprintln!("Command failed with exit code: {}", status);
-                }
-            }
-            Err(err) => {
-                eprintln!("Failed to execute command: {}", err);
+            if let Err(err) = child.wait().await {
+                eprintln!("Command failed with exit code: {}", err);
             }
         }
     }
@@ -38,7 +62,7 @@ async fn main() {
         home_dir.push(HISTORY_FILE);
         if let Some(parent) = home_dir.parent() {
             if !parent.exists() {
-                create_dir_all(parent).expect("Failed to create history directory");
+                create_dir_all(parent).await.expect("Failed to create history directory");
             }
         }
     }
@@ -58,13 +82,10 @@ async fn main() {
 
                 rl.add_history_entry(line.clone());
 
-                // Clone the line before passing it to the asynchronous task
                 let line_clone = line.clone();
-                // Spawn a Tokio task to execute the command asynchronously
                 task::spawn(execute_command(line_clone)).await.unwrap();
             }
             Err(_) => {
-                // Handle Ctrl+C or Ctrl+D (EOF)
                 break;
             }
         }
