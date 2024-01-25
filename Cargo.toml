@@ -1,14 +1,14 @@
 [package]
 name = "shll"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 whoami = "0.8.1"
+rustyline = "8.1.0"
 which = "4.0.2"
 dirs = "3.0.2"
-rustyline = "8.1.0"
 tokio = { version = "1.35.1", features = ["full"] }
 tokio-util = "0.7.10"

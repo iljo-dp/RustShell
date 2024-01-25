@@ -1,8 +1,9 @@
 use std::process::exit;
 use tokio::fs::create_dir_all;
+use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use tokio::task;
-
+use rustyline::completion;
 mod prompt;
 mod piping;
 const HISTORY_FILE: &str = ".local/share/rsh/history";
@@ -25,19 +26,25 @@ async fn main() {
     }
 
     loop {
-        let readline = rl.readline(&prompt::get_prompt());
+        let readline = task::block_in_place(|| rl.readline(&prompt::get_prompt()));
         match readline {
             Ok(line) => {
-                if line.trim() == "exit" {
+                let mut line = line.trim().to_string();
+                if line == "exit" {
                     exit(0);
                 }
 
                 rl.add_history_entry(line.clone());
 
+                // Execute command after potential autocompletion
                 let line_clone = line.clone();
                 task::spawn(piping::execute_command(line_clone)).await.unwrap();
             }
-            Err(_) => {
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+                break;
+            }
+            Err(err) => {
+                eprintln!("Error: {:?}", err);
                 break;
             }
         }
@@ -47,3 +54,4 @@ async fn main() {
         eprintln!("Failed to save history: {}", err);
     }
 }
+
