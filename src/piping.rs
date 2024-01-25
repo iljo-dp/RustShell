@@ -1,6 +1,5 @@
-// piping.rs
-
-use tokio::io::{self, BufReader, BufWriter};
+use std::io::{Error, ErrorKind};
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
 
 pub async fn execute_command(line: String) {
     let mut parts = line.trim().split_whitespace();
@@ -21,29 +20,61 @@ pub async fn execute_command(line: String) {
 }
 
 pub async fn execute_pipeline(commands: &[&str]) {
-    if !commands.is_empty() {
-        let mut child = tokio::process::Command::new(commands[0])
-            .args(&commands[1..])
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .expect("Failed to start command");
+    if commands.is_empty() {
+        return;
+    }
 
-        if let Some(stdout) = child.stdout.take() {
-            let stdin_writer = io::stdout();
-            let mut stdout_reader = BufReader::new(stdout);
-            let mut stdin_writer = BufWriter::new(stdin_writer);
+    let command = commands[0];
 
-            let _ = tokio::spawn(async move {
-                if let Err(err) = io::copy(&mut stdout_reader, &mut stdin_writer).await {
-                    eprintln!("Failed to copy: {}", err);
+    if let Err(err) = is_command_available(command).await {
+        eprintln!("Command '{}' not found: {}", command, err);
+        return;
+    }
+
+    let child = tokio::process::Command::new(command)
+        .args(&commands[1..])
+        .stdout(std::process::Stdio::piped())
+        .spawn();
+
+    match child {
+        Ok(mut child) => {
+            if let Some(stdout) = child.stdout.take() {
+                let mut stdout_reader = io::BufReader::new(stdout);
+                let mut stdout_writer = io::stdout();
+
+                if let Err(err) = io::copy(&mut stdout_reader, &mut stdout_writer).await {
+                    eprintln!("Failed to copy output: {}", err);
                 }
-            })
-            .await;
+            }
 
             if let Err(err) = child.wait().await {
                 eprintln!("Command failed with exit code: {}", err);
             }
         }
+        Err(err) => {
+            eprintln!("Failed to start command '{}': {}", command, err);
+        }
     }
+}
+
+async fn is_command_available(command: &str) -> Result<(), Error> {
+    let command_path = match which::which(command) {
+        Ok(path) => path,
+        Err(_) => {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("Command '{}' not found", command),
+            ));
+        }
+    };
+
+    if command_path.to_str() == Some("") {
+        return Err(Error::new(
+            ErrorKind::NotFound,
+            format!("Command '{}' not found", command),
+        ));
+    }
+
+    Ok(())
 }
 
