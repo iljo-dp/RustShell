@@ -1,11 +1,15 @@
+// main.rs
+
 use std::process::exit;
 use tokio::fs::create_dir_all;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use tokio::task;
-use rustyline::completion;
+
 mod prompt;
 mod piping;
+mod completion; // Import the completion module
+
 const HISTORY_FILE: &str = ".local/share/rsh/history";
 
 #[tokio::main]
@@ -15,7 +19,9 @@ async fn main() {
         home_dir.push(HISTORY_FILE);
         if let Some(parent) = home_dir.parent() {
             if !parent.exists() {
-                create_dir_all(parent).await.expect("Failed to create history directory");
+                create_dir_all(parent)
+                    .await
+                    .expect("Failed to create history directory");
             }
         }
     }
@@ -36,7 +42,7 @@ async fn main() {
 
                 rl.add_history_entry(line.clone());
 
-                // Execute command after potential autocompletion
+                // Execute command after potential auto-completion
                 let line_clone = line.clone();
                 task::spawn(piping::execute_command(line_clone)).await.unwrap();
             }
@@ -54,4 +60,3 @@ async fn main() {
         eprintln!("Failed to save history: {}", err);
     }
 }
-
